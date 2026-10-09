@@ -1,0 +1,6 @@
+FROM php:8.3-apache
+RUN a2enmod rewrite headers && mkdir /private && chown www-data:www-data /private
+ENV FOLLOWUP_PRIVATE_DIR=/private
+COPY --chown=www-data:www-data web /var/www/html/followup
+COPY tests/apache-test.conf /etc/apache2/conf-available/followup-test.conf
+RUN a2enconf followup-test
