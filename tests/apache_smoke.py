@@ -13,13 +13,13 @@ with sync_playwright() as p:
     page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto(BASE)
     expect(page.locator('#setup')).to_be_visible()
-    for name,value in {'name':'検証講師','email':'teacher@example.test','password':'test-password-123','confirmation':'test-password-123','setup_key':'test-activation-key'}.items():
+    for name,value in {'name':'検証講師','email':'teacher@example.test','password':'Test-password-123','confirmation':'Test-password-123','setup_key':'test-activation-key'}.items():
         page.locator(f'#setup [name={name}]').fill(value)
     page.get_by_role('button',name='アカウントを作成して開始').click()
     expect(page.locator('h1')).to_have_text('生徒ダッシュボード')
     cookies=page.context.cookies();assert any(c['secure'] and c['httpOnly'] and c['path']=='/followup' for c in cookies)
     for n in range(1,15):
-        status=page.evaluate('''async d=>(await fetch('./api/students',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(d)})).status''',{'name':f'検証生徒{n:02d}','email':f'student{n}@example.test','password':'test-password-123'})
+        status=page.evaluate('''async d=>(await fetch('./api/students',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(d)})).status''',{'name':f'検証生徒{n:02d}','email':f'student{n}@example.test','password':'Test-password-123'})
         assert status==200
     page.reload();expect(page.locator('#rows tr')).to_have_count(14)
     with page.expect_download() as download:

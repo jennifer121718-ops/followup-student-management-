@@ -164,11 +164,11 @@ function dashboard() {
     ["prefecture", "都道府県", "text"],
     ["cohort", "参加期", "text"],
     ["start_date", "フォローアップ開始日", "date"],
-    ["password", "初期パスワード（6文字以上）", "password"],
+    ["password", "初期パスワード（8文字以上・英大文字／英小文字／数字を含む）", "password"],
   ]
     .map(
       ([k, l, t]) =>
-        `<div><label>${l}</label><input name="${k}" type="${t}" ${["name", "email", "password"].includes(k) ? "required" : ""} ${k === "password" ? 'minlength="6" autocomplete="new-password"' : ""}></div>`,
+        `<div><label>${l}</label><input name="${k}" type="${t}" ${["name", "email", "password"].includes(k) ? "required" : ""} ${k === "password" ? 'minlength="8" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}" autocomplete="new-password"' : ""}></div>`,
     )
     .join(
       "",
@@ -290,7 +290,7 @@ function detail() {
   );
 }
 function password() {
-  app.innerHTML = `<section class="login"><h1>パスワード変更</h1><form id="pw"><label>現在のパスワード</label><input name="current" type="password" autocomplete="current-password" required><label>新しいパスワード（6文字以上）</label><input name="password" type="password" minlength="6" autocomplete="new-password" required><div class="actions"><button>変更する</button><button type="button" class="secondary" id="cancel">戻る</button></div></form></section>`;
+  app.innerHTML = `<section class="login"><h1>パスワード変更</h1><form id="pw"><label>現在のパスワード</label><input name="current" type="password" autocomplete="current-password" required><label>新しいパスワード（8文字以上・英大文字／英小文字／数字を含む）</label><input name="password" type="password" minlength="8" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}" autocomplete="new-password" required><div class="actions"><button>変更する</button><button type="button" class="secondary" id="cancel">戻る</button></div></form></section>`;
   bind("#pw", async (d) => {
     await api("/api/password", d);
     notice("パスワードを変更しました");
@@ -328,7 +328,7 @@ function profileEditor(s) {
     )
     .join(
       "",
-    )}</div><div class="actions"><button>基本情報を保存</button></div></form></details><details class="reset"><summary>生徒のパスワードを再設定</summary><p>本人確認後に実行してください。既存のログインは失効します。新しいパスワードは本人だけに伝えてください。</p><form id="reset-password"><label>新しいパスワード（6文字以上）</label><input type="password" name="password" minlength="6" maxlength="256" autocomplete="new-password" required><div class="actions"><button>再設定する</button></div></form></details></section>`;
+    )}</div><div class="actions"><button>基本情報を保存</button></div></form></details><details class="reset"><summary>生徒のパスワードを再設定</summary><p>本人確認後に実行してください。既存のログインは失効します。新しいパスワードは本人だけに伝えてください。</p><form id="reset-password"><label>新しいパスワード（8文字以上・英大文字／英小文字／数字を含む）</label><input type="password" name="password" minlength="8" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}" maxlength="256" autocomplete="new-password" required><div class="actions"><button>再設定する</button></div></form></details></section>`;
 }
 function bindProfile(s) {
   bind("#profile", async (d) => {
@@ -355,7 +355,7 @@ async function start() {
 }
 function setupScreen(requiresKey = false) {
   account.innerHTML = "";
-  app.innerHTML = `<section class="login"><small>WELCOME TO FOLLOWUP</small><h1>はじめての設定</h1><p>講師のアカウントを作成します。登録後、この画面は利用できなくなります。</p><form id="setup">${requiresKey ? '<label>初期設定キー</label><input name="setup_key" autocomplete="off" required>' : ""}<label>講師名</label><input name="name" autocomplete="name" maxlength="200" required><label>メールアドレス</label><input name="email" type="email" autocomplete="username" required><label>パスワード（6文字以上）</label><input name="password" type="password" minlength="6" maxlength="256" autocomplete="new-password" required><label>パスワード確認</label><input name="confirmation" type="password" minlength="6" autocomplete="new-password" required><div class="actions"><button>アカウントを作成して開始</button></div></form></section>`;
+  app.innerHTML = `<section class="login"><small>WELCOME TO FOLLOWUP</small><h1>はじめての設定</h1><p>講師のアカウントを作成します。登録後、この画面は利用できなくなります。</p><form id="setup">${requiresKey ? '<label>初期設定キー</label><input name="setup_key" autocomplete="off" required>' : ""}<label>講師名</label><input name="name" autocomplete="name" maxlength="200" required><label>メールアドレス</label><input name="email" type="email" autocomplete="username" required><label>パスワード（8文字以上・英大文字／英小文字／数字を含む）</label><input name="password" type="password" minlength="8" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}" maxlength="256" autocomplete="new-password" required><label>パスワード確認</label><input name="confirmation" type="password" minlength="8" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}" autocomplete="new-password" required><div class="actions"><button>アカウントを作成して開始</button></div></form></section>`;
   bind("#setup", async (d) => {
     if (d.password !== d.confirmation) throw Error("パスワードが一致しません");
     await api("/api/setup", d);

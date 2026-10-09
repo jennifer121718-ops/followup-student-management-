@@ -20,17 +20,17 @@ def run():
                 teacher.on('pageerror', lambda e: errors.append(str(e)))
                 teacher.goto(base)
                 expect(teacher.locator('h1')).to_have_text('はじめての設定')
-                for name, value in {'name':'テスト講師','email':'teacher@example.test','password':'teacher-test-123','confirmation':'teacher-test-123'}.items():
+                for name, value in {'name':'テスト講師','email':'teacher@example.test','password':'Teacher-test-123','confirmation':'Teacher-test-123'}.items():
                     teacher.locator(f'#setup [name={name}]').fill(value)
                 teacher.get_by_role('button',name='アカウントを作成して開始').click()
                 expect(teacher.locator('h1')).to_have_text('生徒ダッシュボード')
                 teacher.get_by_text('生徒を追加する',exact=True).click()
-                for name,value in {'name':'テスト生徒01','email':'student1@example.test','password':'student-test-123','prefecture':'東京都','cohort':'第1期','start_date':'2026-09-01'}.items():
+                for name,value in {'name':'テスト生徒01','email':'student1@example.test','password':'Student-test-123','prefecture':'東京都','cohort':'第1期','start_date':'2026-09-01'}.items():
                     teacher.locator(f'#add [name={name}]').fill(value)
                 teacher.get_by_role('button',name='生徒を登録',exact=True).click()
                 expect(teacher.locator('#rows')).to_contain_text('テスト生徒01')
                 for n in range(2,15):
-                    response = teacher.evaluate('''async d=>{let r=await fetch('/api/students',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(d)});return r.status}''',{'name':f'テスト生徒{n:02d}','email':f'student{n}@example.test','password':'student-test-123'})
+                    response = teacher.evaluate('''async d=>{let r=await fetch('/api/students',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(d)});return r.status}''',{'name':f'テスト生徒{n:02d}','email':f'student{n}@example.test','password':'Student-test-123'})
                     assert response == 200
                 teacher.reload()
                 expect(teacher.locator('#rows tr')).to_have_count(14)
@@ -39,7 +39,7 @@ def run():
                 student.on('pageerror',lambda e:errors.append(str(e)))
                 student.goto(base)
                 student.locator('#login [name=email]').fill('student1@example.test')
-                student.locator('#login [name=password]').fill('student-test-123')
+                student.locator('#login [name=password]').fill('Student-test-123')
                 student.get_by_role('button',name='ログイン',exact=True).click()
                 expect(student.locator('h1')).to_contain_text('テスト生徒01')
                 student.locator('#month').fill('2026-09')
@@ -102,7 +102,7 @@ def run():
                 other = browser.new_page()
                 other.goto(base)
                 other.locator('#login [name=email]').fill('student2@example.test')
-                other.locator('#login [name=password]').fill('student-test-123')
+                other.locator('#login [name=password]').fill('Student-test-123')
                 other.get_by_role('button',name='ログイン',exact=True).click()
                 expect(other.locator('h1')).to_contain_text('テスト生徒02')
                 assert other.evaluate("async()=> (await (await fetch('/api/reports')).json()).length") == 0

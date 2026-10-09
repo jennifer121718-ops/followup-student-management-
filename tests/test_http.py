@@ -11,10 +11,10 @@ class HTTPTests(unittest.TestCase):
     def setUp(self):
         self.context=php_server();self.base,self.private=self.context.__enter__()
         self.host=urlparse(self.base).netloc
-        self.assertEqual(self.request('/api/setup',{'name':'講師','email':'teacher@example.test','password':'test-password-123'})[0],200)
+        self.assertEqual(self.request('/api/setup',{'name':'講師','email':'teacher@example.test','password':'Test-password-123'})[0],200)
         self.teacher=self.login('teacher@example.test')
         for name,email in [('生徒A','a@example.test'),('生徒B','b@example.test')]:
-            self.assertEqual(self.request('/api/students',{'name':name,'email':email,'password':'test-password-123'},self.teacher)[0],200)
+            self.assertEqual(self.request('/api/students',{'name':name,'email':email,'password':'Test-password-123'},self.teacher)[0],200)
 
     def tearDown(self):
         self.context.__exit__(None,None,None)
@@ -30,7 +30,7 @@ class HTTPTests(unittest.TestCase):
         value=json.loads(body) if 'application/json' in r.getheader('Content-Type','') else body
         result=(r.status,value,cookie);connection.close();return result
 
-    def login(self,email,password='test-password-123'):
+    def login(self,email,password='Test-password-123'):
         code,_,cookie=self.request('/api/login',{'email':email,'password':password})
         self.assertEqual(code,200)
         cookie=cookie.split(';')[0]
@@ -45,7 +45,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/reports?student_id=2',auth=b)[0],403)
         self.assertEqual(self.request('/api/reports',auth=b)[1],[])
         self.assertEqual(self.request('/api/students',auth=a)[0],403)
-        self.assertEqual(self.request('/api/students',{'name':'evil','email':'evil@example.test','password':'test-password-123'},a)[0],403)
+        self.assertEqual(self.request('/api/students',{'name':'evil','email':'evil@example.test','password':'Test-password-123'},a)[0],403)
         feedback={'student_id':2,'month':'2026-10','comment':'良い進捗です','status':'順調'}
         self.assertEqual(self.request('/api/feedback',feedback,a)[0],403)
         self.assertEqual(self.request('/api/feedback',feedback,self.teacher)[0],200)
@@ -64,7 +64,7 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.request('/api/report',payload,a)[0],400)
         self.assertEqual(self.request('/api/reports',auth=a)[1],[])
         self.assertEqual(self.request('/api/report',{'month':'2026-10'},a,headers={'Origin':'https://evil.example'})[0],403)
-        self.assertEqual(self.request('/api/setup',{'name':'evil','email':'evil@example.test','password':'test-password-123'})[0],403)
+        self.assertEqual(self.request('/api/setup',{'name':'evil','email':'evil@example.test','password':'Test-password-123'})[0],403)
 
     def test_profile_password_and_graduation(self):
         a=self.login('a@example.test')
@@ -72,34 +72,32 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/student/profile',profile,a)[0],403)
         self.assertEqual(self.request('/api/student/profile',profile,self.teacher)[0],200)
         self.assertEqual(self.request('/api/me',auth=a)[1]['user']['name'],'生徒A改')
-        self.assertEqual(self.request('/api/student/password',{'id':2,'password':'replacement-password-123'},a)[0],403)
-        self.assertEqual(self.request('/api/student/password',{'id':2,'password':'replacement-password-123'},self.teacher)[0],200)
+        self.assertEqual(self.request('/api/student/password',{'id':2,'password':'Replacement-password-123'},a)[0],403)
+        self.assertEqual(self.request('/api/student/password',{'id':2,'password':'Replacement-password-123'},self.teacher)[0],200)
         self.assertEqual(self.request('/api/me',auth=a)[0],401)
-        a=self.login('new-a@example.test','replacement-password-123')
-        self.assertEqual(self.request('/api/password',{'current':'replacement-password-123','password':'new-password-123'},a)[0],200)
+        a=self.login('new-a@example.test','Replacement-password-123')
+        self.assertEqual(self.request('/api/password',{'current':'Replacement-password-123','password':'New-password-123'},a)[0],200)
         self.assertEqual(self.request('/api/student/update',{'id':2,'active':False},self.teacher)[0],200)
         self.assertEqual(self.request('/api/me',auth=a)[0],401)
         self.assertEqual(self.request('/api/student/update',{'id':2,'active':True},self.teacher)[0],200)
         self.assertEqual(self.request('/api/me',auth=a)[0],401)
-        a=self.login('new-a@example.test','new-password-123')
+        a=self.login('new-a@example.test','New-password-123')
         self.assertEqual(self.request('/api/logout',{},a)[0],200)
         self.assertEqual(self.request('/api/me',auth=a)[0],401)
 
-    def test_six_character_passwords(self):
-        data={'name':'六文字テスト','email':'six@example.test','password':'12345'}
-        self.assertEqual(self.request('/api/students',data,self.teacher)[0],400)
-        self.assertEqual(self.request('/api/students',{**data,'password':'123456'},self.teacher)[0],200)
-        student=self.login('six@example.test','123456')
-        self.assertEqual(self.request('/api/password',{'current':'123456','password':'abcde'},student)[0],400)
-        self.assertEqual(self.request('/api/password',{'current':'123456','password':'abcdef'},student)[0],200)
-        student=self.login('six@example.test','abcdef')
+    def test_password_complexity(self):
+        data={'name':'条件テスト','email':'complex@example.test'}
+        for password in ['Abc1234','abcdefgh','ABCDEFGH','12345678','abcd1234','ABCD1234','Abcdefgh','あいうえおかきく']:
+            self.assertEqual(self.request('/api/students',{**data,'password':password},self.teacher)[0],400)
+        self.assertEqual(self.request('/api/students',{**data,'password':'Abcd1234'},self.teacher)[0],200)
+        student=self.login(data['email'],'Abcd1234')
+        self.assertEqual(self.request('/api/password',{'current':'Abcd1234','password':'abcd1234'},student)[0],400)
+        self.assertEqual(self.request('/api/password',{'current':'Abcd1234','password':'Xy123456'},student)[0],200)
+        student=self.login(data['email'],'Xy123456')
         student_id=self.request('/api/me',auth=student)[1]['user']['id']
-        self.assertEqual(self.request('/api/student/password',{'id':student_id,'password':'12345'},self.teacher)[0],400)
-        self.assertEqual(self.request('/api/student/password',{'id':student_id,'password':'654321'},self.teacher)[0],200)
-        self.login('six@example.test','654321')
-        unicode={'name':'文字数テスト','email':'unicode@example.test','password':'あいうえお'}
-        self.assertEqual(self.request('/api/students',unicode,self.teacher)[0],400)
-        self.assertEqual(self.request('/api/students',{**unicode,'password':'あいうえおか'},self.teacher)[0],200)
+        self.assertEqual(self.request('/api/student/password',{'id':student_id,'password':'12345678'},self.teacher)[0],400)
+        self.assertEqual(self.request('/api/student/password',{'id':student_id,'password':'Zz987654'},self.teacher)[0],200)
+        self.login(data['email'],'Zz987654')
 
     def test_weekly_reports_and_isolation(self):
         a=self.login('a@example.test');b=self.login('b@example.test')
@@ -151,7 +149,7 @@ class PublicSetupTests(unittest.TestCase):
                 c=http.client.HTTPConnection(urlparse(base).netloc)
                 c.request('POST','/api/setup',json.dumps(data),{'Content-Type':'application/json','Host':'school.example.test'})
                 r=c.getresponse();status=r.status;r.read();c.close();return status
-            data={'name':'講師','email':'teacher@example.test','password':'123456'}
+            data={'name':'講師','email':'teacher@example.test','password':'Abcd1234'}
             self.assertEqual(send(data),403)
             self.assertEqual(send({**data,'setup_key':'wrong'}),403)
             self.assertEqual(send({**data,'setup_key':key}),200)
