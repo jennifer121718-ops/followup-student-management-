@@ -85,6 +85,35 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/logout',{},a)[0],200)
         self.assertEqual(self.request('/api/me',auth=a)[0],401)
 
+    def test_weekly_reports_and_isolation(self):
+        a=self.login('a@example.test');b=self.login('b@example.test')
+        monthly={'month':'2026-10','sales':123456,'submitted':True}
+        self.assertEqual(self.request('/api/report',monthly,a)[0],200)
+        with sqlite3.connect(self.private/'students.sqlite3') as legacy:
+            legacy.execute('DROP TABLE weekly_reports')
+        payload={'week_start':'2026-10-05','activities':'商品選定','challenges':'仕入れの相談','next_actions':'出品','condition':'相談したい','submitted':False}
+        self.assertEqual(self.request('/api/weekly',payload,a)[0],200)
+        self.assertEqual(self.request('/api/weekly',auth=a)[1][0]['submitted'],0)
+        self.assertEqual(self.request('/api/weekly',{**payload,'submitted':True},a)[0],200)
+        self.assertEqual(self.request('/api/weekly',{**payload,'activities':'追記','submitted':True},a)[0],200)
+        row=self.request('/api/weekly',auth=a)[1][0]
+        self.assertEqual(row['activities'],'追記');self.assertEqual(row['submitted'],1)
+        self.assertEqual(self.request('/api/weekly',auth=b)[1],[])
+        self.assertEqual(self.request('/api/weekly?student_id=2',auth=b)[0],403)
+        self.assertEqual(self.request('/api/weekly',{**payload,'student_id':3},a)[0],403)
+        self.assertEqual(self.request('/api/weekly',payload,a,csrf=False)[0],403)
+        self.assertEqual(self.request('/api/weekly',{**payload,'week_start':'2026-10-06'},a)[0],400)
+        feedback={'student_id':2,'week_start':'2026-10-05','status':'フォロー必要','comment':'相談しましょう'}
+        self.assertEqual(self.request('/api/weekly-feedback',feedback,a)[0],403)
+        self.assertEqual(self.request('/api/weekly-feedback',feedback,self.teacher)[0],200)
+        self.assertEqual(self.request('/api/weekly',{**payload,'comment':'改ざん','status':'順調'},a)[0],200)
+        row=self.request('/api/weekly',auth=a)[1][0]
+        self.assertEqual(row['comment'],'相談しましょう');self.assertEqual(row['status'],'フォロー必要')
+        self.assertEqual(self.request('/api/weekly',{**payload,'week_start':'2025-01-06'},a)[0],200)
+        self.assertEqual(len(self.request('/api/weekly',auth=a)[1]),2)
+        self.assertEqual(self.request('/api/reports',auth=a)[1][0]['sales'],123456)
+        self.assertEqual(self.request('/api/weekly')[0],401)
+
     def test_backup_and_persistence(self):
         a=self.login('a@example.test')
         self.assertEqual(self.request('/api/report',{'month':'2026-10','sales':120000,'submitted':True},a)[0],200)

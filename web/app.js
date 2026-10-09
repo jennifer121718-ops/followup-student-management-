@@ -4,6 +4,7 @@ let me,
   csrf,
   students = [],
   reports = [],
+  weeklyReports = [],
   selected = null,
   month = new Date()
     .toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" })
@@ -31,9 +32,9 @@ const fields = {
   next_target: "来月の目標売上（円）",
   current_goal: "今月の目標・重点事項",
   next_goal: "来月の目標・重点事項",
-  activities: "今月取り組んだこと",
-  successes: "良かったこと",
-  challenges: "現在の課題",
+  activities: "今月の主な取り組み・成果",
+  successes: "今月うまくいったこと・再現したいこと",
+  challenges: "月全体の振り返り・改善したい課題",
   next_actions: "来月やること",
   consultation: "講師に相談したいこと",
 };
@@ -64,6 +65,7 @@ async function api(path, data) {
     if (r.status === 401 && me) {
       me = null;
       reports = [];
+      weeklyReports = [];
       students = [];
       selected = null;
       login();
@@ -111,6 +113,7 @@ async function load() {
   me = v.user;
   csrf = v.csrf;
   reports = await api("/api/reports");
+  weeklyReports = await api("/api/weekly");
   students = me.role === "teacher" ? await api("/api/students") : [me];
   account.innerHTML = `${esc(me.name)}　<button class="secondary" id="password">パスワード変更</button> <button class="secondary" id="logout">ログアウト</button>`;
   document.querySelector("#logout").onclick = async () => {
@@ -118,6 +121,7 @@ async function load() {
     me = null;
     csrf = null;
     reports = [];
+    weeklyReports = [];
     students = [];
     selected = null;
     login();
@@ -170,6 +174,7 @@ function dashboard() {
       "",
     )}</div><div class="actions"><button>生徒を登録</button></div></form></details></section>`;
   setMonth();
+  weeklyDashboard();
   function rows(filter = "all") {
     const search = document.querySelector("#search").value;
     const list = students
@@ -228,7 +233,7 @@ function detail() {
     },
     history = reports.filter((r) => r.student_id === s.id && r.submitted),
     max = Math.max(1, ...history.map((r) => r.sales));
-  app.innerHTML = `${me.role === "teacher" ? '<button class="secondary" id="back">← 生徒一覧</button>' : ""}<h1>${esc(s.name)}${me.role === "teacher" ? " さんのカルテ" : " さんのマイページ"}</h1><p>${esc(s.prefecture || "都道府県未登録")} / ${esc(s.cohort || "参加期未登録")} / 開始日 ${esc(s.start_date || "未登録")} / ${s.active ? "在籍" : "卒業"}</p><div class="toolbar">${monthControl()}${badge(r.submitted ? "提出済み" : "未提出")}${badge(r.status || "要確認")}</div><section><h2>売上・利益の推移</h2>${history.length ? trend(history) : "<p>提出済みの月報があると推移が表示されます。</p>"}<div class="tablewrap"><table><thead><tr><th>月</th><th>売上</th><th>粗利益</th><th>純利益</th><th>目標達成率</th><th>前月比</th></tr></thead><tbody>${history.map((r) => `<tr><td><button class="link" data-month="${r.month}">${r.month}</button></td><td>${money(r.sales)}</td><td>${money(r.gross_profit)}</td><td>${money(r.net_profit)}</td><td>${ratio(r)}</td><td>${growth(s.id, r.month)}</td></tr>`).join("")}</tbody></table></div></section><section><h2>${month} の月報</h2><p>目標達成率 ${ratio(r)} ・ 売上前月比 ${growth(s.id)}<br>粗利益＝売上−仕入原価、純利益＝粗利益−経費。下書きは集計対象外です。提出後も修正・再提出できます。</p>${r.submitted_at ? `<p>最終提出：${new Date(r.submitted_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>` : ""}<form id="report"><div class="grid">${Object.entries(
+  app.innerHTML = `${me.role === "teacher" ? '<button class="secondary" id="back">← 生徒一覧</button>' : ""}<h1>${esc(s.name)}${me.role === "teacher" ? " さんのカルテ" : " さんのマイページ"}</h1><p>${esc(s.prefecture || "都道府県未登録")} / ${esc(s.cohort || "参加期未登録")} / 開始日 ${esc(s.start_date || "未登録")} / ${s.active ? "在籍" : "卒業"}</p><div class="toolbar">${monthControl()}${badge(r.submitted ? "提出済み" : "未提出")}${badge(r.status || "要確認")}</div><section><h2>売上・利益の推移</h2>${history.length ? trend(history) : "<p>提出済みの月報があると推移が表示されます。</p>"}<div class="tablewrap"><table id="monthly-history"><thead><tr><th>月</th><th>売上</th><th>粗利益</th><th>純利益</th><th>目標達成率</th><th>前月比</th></tr></thead><tbody>${history.map((r) => `<tr><td><button class="link" data-month="${r.month}">${r.month}</button></td><td>${money(r.sales)}</td><td>${money(r.gross_profit)}</td><td>${money(r.net_profit)}</td><td>${ratio(r)}</td><td>${growth(s.id, r.month)}</td></tr>`).join("")}</tbody></table></div></section><section><h2>${month} の月報</h2><p>目標達成率 ${ratio(r)} ・ 売上前月比 ${growth(s.id)}<br>粗利益＝売上−仕入原価、純利益＝粗利益−経費。下書きは集計対象外です。提出後も修正・再提出できます。</p>${r.submitted_at ? `<p>最終提出：${new Date(r.submitted_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>` : ""}<form id="report"><div class="grid">${Object.entries(
     fields,
   )
     .map(
@@ -239,6 +244,7 @@ function detail() {
       "",
     )}</div><div class="actions"><button class="secondary" value="draft">下書き保存</button><button value="submit">月報を提出</button></div></form></section><section><h2>講師からのコメント</h2>${me.role === "teacher" ? `<form id="feedback"><label>ステータス</label><select name="status">${["順調", "要確認", "フォロー必要"].map((v) => `<option ${r.status === v ? "selected" : ""}>${v}</option>`).join("")}</select><label>コメント</label><textarea name="comment" maxlength="10000">${esc(r.comment || "")}</textarea><div class="actions"><button>コメントを保存</button></div></form>` : `<p class="comment">${esc(r.comment || "まだコメントはありません。").replace(/\n/g, "<br>")}</p>`}</section>${me.role === "teacher" ? `${profileEditor(s)}<section><h2>在籍管理</h2><p>卒業扱いにするとログインできなくなります。過去の月報は保持されます。</p><button class="secondary" id="active">${s.active ? "卒業扱いにする" : "在籍に戻す"}</button></section>` : ""}`;
   setMonth();
+  weeklyDetail(s);
   if (me.role === "teacher") {
     bindProfile(s);
     document.querySelector("#back").onclick = () => {
@@ -458,4 +464,114 @@ async function downloadBackup() {
   } catch (e) {
     notice(e.message);
   }
+}
+
+function monday(value) {
+  const d = new Date(value + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+let week = monday(
+  new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }),
+);
+function weekEnd(value) {
+  const d = new Date(value + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 6);
+  return d.toISOString().slice(0, 10);
+}
+function weeklyReport(id) {
+  return weeklyReports.find(
+    (r) => r.student_id === id && r.week_start === week,
+  );
+}
+function weeklyDashboard() {
+  const section = document.createElement("section");
+  section.id = "weekly-dashboard";
+  section.innerHTML = `<h2>週報の提出状況</h2><p>短い週報で、今困っていることを早めに確認できます。月報は売上・利益と月全体の振り返りを記録します。</p><div class="toolbar"><label for="dashboard-week">対象週（月曜〜日曜）</label><input id="dashboard-week" type="date" value="${week}"><span>${week} 〜 ${weekEnd(week)}</span></div><div class="tablewrap"><table><thead><tr><th>生徒</th><th>週報</th><th>生徒の状況</th><th>講師のステータス</th></tr></thead><tbody>${
+    students
+      .filter((s) => s.active)
+      .map((s) => {
+        const r = weeklyReport(s.id);
+        return `<tr><td><button class="link" data-weekly-student="${s.id}">${esc(s.name)}</button></td><td>${badge(r?.submitted ? "提出済み" : "未提出")}</td><td>${r?.submitted ? badge(r.condition) : "—"}</td><td>${badge(r?.status || "要確認")}</td></tr>`;
+      })
+      .join("") || '<tr><td colspan="4">在籍生徒はいません。</td></tr>'
+  }</tbody></table></div></section>`;
+  document.querySelector("#rows").closest("section").after(section);
+  document.querySelector("#dashboard-week").onchange = (e) => {
+    if (e.target.value) {
+      week = monday(e.target.value);
+      dashboard();
+    }
+  };
+  document.querySelectorAll("[data-weekly-student]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        selected = Number(b.dataset.weeklyStudent);
+        detail();
+        document
+          .querySelector("#weekly-detail")
+          .scrollIntoView({ behavior: "smooth" });
+      }),
+  );
+}
+function weeklyDetail(student) {
+  const r = weeklyReport(student.id) || {},
+    history = weeklyReports
+      .filter((r) => r.student_id === student.id)
+      .slice()
+      .reverse();
+  const section = document.createElement("section");
+  section.id = "weekly-detail";
+  section.innerHTML = `<h2>週報</h2><p>週報は好きな日に入力・保存・提出できます。締切はなく、同じ週の内容は何度でも追記・修正できます。過去の週も選べます。売上・利益・金額目標は月報に入力してください。</p><div class="toolbar"><label for="detail-week">対象週（月曜〜日曜）</label><input id="detail-week" type="date" value="${week}"><span>${week} 〜 ${weekEnd(week)}</span>${badge(r.submitted ? "提出済み" : "未提出")}</div>${r.submitted_at ? `<p>最終提出：${new Date(r.submitted_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>` : ""}<form id="weekly-report">${[
+    ["activities", "今週取り組んだこと"],
+    ["challenges", "今困っていること・相談したいこと"],
+    ["next_actions", "来週やること"],
+  ]
+    .map(
+      ([key, label]) =>
+        `<label for="weekly-${key}">${label}</label><textarea id="weekly-${key}" name="${key}" maxlength="10000">${esc(r[key] || "")}</textarea>`,
+    )
+    .join(
+      "",
+    )}<label for="weekly-condition">今の状況</label><select id="weekly-condition" name="condition">${["順調", "少し困っている", "相談したい"].map((v) => `<option ${r.condition === v ? "selected" : ""}>${v}</option>`).join("")}</select><div class="actions"><button class="secondary" value="draft">週報を下書き保存</button><button value="submit">週報を提出</button></div></form><h3>この週の講師コメント</h3>${me.role === "teacher" ? `<form id="weekly-feedback"><label>講師のステータス</label><select name="status">${["順調", "要確認", "フォロー必要"].map((v) => `<option ${r.status === v ? "selected" : ""}>${v}</option>`).join("")}</select><label>コメント</label><textarea name="comment" maxlength="10000">${esc(r.comment || "")}</textarea><div class="actions"><button>週報コメントを保存</button></div></form>` : `<p class="weekly-comment">${esc(r.comment || "まだコメントはありません。").replace(/\n/g, "<br>")}</p>`}<h3>過去の週報</h3><div class="tablewrap"><table><thead><tr><th>対象週</th><th>提出</th><th>状況</th></tr></thead><tbody>${history.map((h) => `<tr><td><button class="link" data-history-week="${h.week_start}">${h.week_start} 〜 ${weekEnd(h.week_start)}</button></td><td>${h.submitted ? "提出済み" : "下書き"}</td><td>${esc(h.condition)}</td></tr>`).join("") || '<tr><td colspan="3">週報はまだありません。</td></tr>'}</tbody></table></div>`;
+  document.querySelector("#report").closest("section").before(section);
+  document.querySelector("#detail-week").onchange = (e) => {
+    if (e.target.value) {
+      week = monday(e.target.value);
+      detail();
+    }
+  };
+  document.querySelectorAll("[data-history-week]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        week = b.dataset.historyWeek;
+        detail();
+        document.querySelector("#weekly-detail").scrollIntoView();
+      }),
+  );
+  bind("#weekly-report", async (d, b) => {
+    const savedWeek = week;
+    await api("/api/weekly", {
+      ...d,
+      student_id: student.id,
+      week_start: savedWeek,
+      submitted: b.value === "submit",
+    });
+    notice(
+      b.value === "submit"
+        ? "週報を提出しました"
+        : "週報の下書きを保存しました",
+    );
+    await load();
+  });
+  if (me.role === "teacher")
+    bind("#weekly-feedback", async (d) => {
+      await api("/api/weekly-feedback", {
+        ...d,
+        student_id: student.id,
+        week_start: week,
+      });
+      notice("週報コメントを保存しました");
+      await load();
+    });
 }

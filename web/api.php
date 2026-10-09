@@ -61,6 +61,7 @@ try {
     $db->exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     $db->exec("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, password TEXT NOT NULL,role TEXT NOT NULL,name TEXT NOT NULL,prefecture TEXT DEFAULT '',cohort TEXT DEFAULT '',start_date TEXT DEFAULT '',active INTEGER DEFAULT 1);
     CREATE TABLE IF NOT EXISTS reports(student_id INTEGER REFERENCES users(id),month TEXT NOT NULL,sales REAL DEFAULT 0,gross_profit REAL DEFAULT 0,net_profit REAL DEFAULT 0,units INTEGER DEFAULT 0,target REAL DEFAULT 0,next_target REAL DEFAULT 0,current_goal TEXT DEFAULT '',next_goal TEXT DEFAULT '',activities TEXT DEFAULT '',successes TEXT DEFAULT '',challenges TEXT DEFAULT '',next_actions TEXT DEFAULT '',consultation TEXT DEFAULT '',submitted INTEGER DEFAULT 0,submitted_at TEXT,comment TEXT DEFAULT '',status TEXT DEFAULT '要確認',PRIMARY KEY(student_id,month));
+    CREATE TABLE IF NOT EXISTS weekly_reports(student_id INTEGER REFERENCES users(id),week_start TEXT NOT NULL,activities TEXT DEFAULT '',challenges TEXT DEFAULT '',next_actions TEXT DEFAULT '',condition TEXT DEFAULT '順調',submitted INTEGER DEFAULT 0,submitted_at TEXT,comment TEXT DEFAULT '',status TEXT DEFAULT '要確認',PRIMARY KEY(student_id,week_start));
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),csrf TEXT NOT NULL,expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS login_attempts(bucket TEXT PRIMARY KEY,count INTEGER NOT NULL,started INTEGER NOT NULL);");
     chmod($private . '/students.sqlite3', 0600);
@@ -129,6 +130,14 @@ try {
     if (!$user) reply(401,['error'=>'ログインしてください']);
     if ($method === 'GET') {
         if ($route === '/api/me') reply(200,['user'=>userView($user),'csrf'=>$session['csrf']]);
+        if ($route === '/api/weekly') {
+            if ($user['role'] === 'student') {
+                if (isset($_GET['student_id']) && (string)$_GET['student_id'] !== (string)$user['id']) reply(403,['error'=>'アクセスできません']);
+                $rows=run($db,'SELECT * FROM weekly_reports WHERE student_id=? ORDER BY week_start',[$user['id']])->fetchAll();
+            } else $rows=$db->query('SELECT * FROM weekly_reports ORDER BY week_start')->fetchAll();
+            foreach ($rows as &$row) { $row['student_id']=(int)$row['student_id'];$row['submitted']=(int)$row['submitted']; } unset($row);
+            reply(200,$rows);
+        }
         if ($route === '/api/students') {
             if ($user['role'] !== 'teacher') reply(403,['error'=>'アクセスできません']);
             reply(200,array_map('userView',$db->query("SELECT * FROM users WHERE role='student' ORDER BY active DESC,name")->fetchAll()));
@@ -164,7 +173,7 @@ try {
         setcookie('followup_session','',['expires'=>time()-3600,'path'=>rtrim(dirname($_SERVER['SCRIPT_NAME']),'/')?:'/','secure'=>$secure,'httponly'=>true,'samesite'=>'Strict']);
         reply(200,['ok'=>true]);
     }
-    $teacherRoutes=['/api/students','/api/student/update','/api/student/profile','/api/student/password','/api/feedback'];
+    $teacherRoutes=['/api/students','/api/student/update','/api/student/profile','/api/student/password','/api/feedback','/api/weekly-feedback'];
     if (in_array($route,$teacherRoutes,true) && $user['role'] !== 'teacher') reply(403,['error'=>'アクセスできません']);
     if ($route === '/api/students') {
         $values=credentials($data);
@@ -195,6 +204,30 @@ try {
         $db->exec('BEGIN IMMEDIATE');
         run($db,'UPDATE users SET password=? WHERE id=?',[password_hash($new,PASSWORD_DEFAULT),$user['id']]);
         run($db,'DELETE FROM sessions WHERE user_id=? AND token<>?',[$user['id'],$token]);$db->exec('COMMIT');reply(200,['ok'=>true]);
+    }
+    if (in_array($route,['/api/weekly','/api/weekly-feedback'],true)) {
+        $id=idValue($data['student_id']??$user['id']);
+        if ($user['role']==='student' && $id !== (int)$user['id']) reply(403,['error'=>'アクセスできません']);
+        if (!run($db,"SELECT 1 FROM users WHERE id=? AND role='student'",[$id])->fetchColumn()) throw new InvalidArgumentException();
+        $week=$data['week_start']??'';
+        if (!is_string($week)) throw new InvalidArgumentException();
+        $date=DateTimeImmutable::createFromFormat('!Y-m-d',$week);
+        if (!$date || $date->format('Y-m-d')!==$week || $date->format('N')!=='1') throw new InvalidArgumentException();
+        if ($route==='/api/weekly-feedback') {
+            $status=$data['status']??'';$comment=textValue($data,'comment');
+            if (!in_array($status,['順調','要確認','フォロー必要'],true)) throw new InvalidArgumentException();
+            $db->exec('BEGIN IMMEDIATE');
+            run($db,'INSERT OR IGNORE INTO weekly_reports(student_id,week_start) VALUES(?,?)',[$id,$week]);
+            run($db,'UPDATE weekly_reports SET comment=?,status=? WHERE student_id=? AND week_start=?',[$comment,$status,$id,$week]);
+        } else {
+            $activities=textValue($data,'activities');$challenges=textValue($data,'challenges');$actions=textValue($data,'next_actions');
+            $condition=$data['condition']??'順調';$submitted=$data['submitted']??false;
+            if (!in_array($condition,['順調','少し困っている','相談したい'],true) || !is_bool($submitted)) throw new InvalidArgumentException();
+            $db->exec('BEGIN IMMEDIATE');
+            run($db,'INSERT OR IGNORE INTO weekly_reports(student_id,week_start) VALUES(?,?)',[$id,$week]);
+            run($db,'UPDATE weekly_reports SET activities=?,challenges=?,next_actions=?,condition=?,submitted=?,submitted_at=? WHERE student_id=? AND week_start=?',[$activities,$challenges,$actions,$condition,(int)$submitted,$submitted?gmdate('Y-m-d\TH:i:s\Z'):null,$id,$week]);
+        }
+        $db->exec('COMMIT');reply(200,['ok'=>true]);
     }
     if (!in_array($route,['/api/report','/api/feedback'],true)) reply(404,['error'=>'見つかりません']);
     $id=idValue($data['student_id']??$user['id']);
