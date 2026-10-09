@@ -19,7 +19,7 @@ function userView(array $row): array {
     $result['id'] = (int)$result['id']; $result['active'] = (int)$result['active']; return $result;
 }
 function passwordValue(mixed $password): string {
-    if (!is_string($password) || strlen($password) < 12 || strlen($password) > 256) throw new InvalidArgumentException();
+    if (!is_string($password) || preg_match_all('/./us', $password) < 6 || strlen($password) > 256) throw new InvalidArgumentException();
     // Prehash avoids bcrypt's 72-byte truncation and supports UTF-8 passwords.
     return hash('sha256', $password);
 }

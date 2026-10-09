@@ -85,6 +85,22 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/logout',{},a)[0],200)
         self.assertEqual(self.request('/api/me',auth=a)[0],401)
 
+    def test_six_character_passwords(self):
+        data={'name':'六文字テスト','email':'six@example.test','password':'12345'}
+        self.assertEqual(self.request('/api/students',data,self.teacher)[0],400)
+        self.assertEqual(self.request('/api/students',{**data,'password':'123456'},self.teacher)[0],200)
+        student=self.login('six@example.test','123456')
+        self.assertEqual(self.request('/api/password',{'current':'123456','password':'abcde'},student)[0],400)
+        self.assertEqual(self.request('/api/password',{'current':'123456','password':'abcdef'},student)[0],200)
+        student=self.login('six@example.test','abcdef')
+        student_id=self.request('/api/me',auth=student)[1]['user']['id']
+        self.assertEqual(self.request('/api/student/password',{'id':student_id,'password':'12345'},self.teacher)[0],400)
+        self.assertEqual(self.request('/api/student/password',{'id':student_id,'password':'654321'},self.teacher)[0],200)
+        self.login('six@example.test','654321')
+        unicode={'name':'文字数テスト','email':'unicode@example.test','password':'あいうえお'}
+        self.assertEqual(self.request('/api/students',unicode,self.teacher)[0],400)
+        self.assertEqual(self.request('/api/students',{**unicode,'password':'あいうえおか'},self.teacher)[0],200)
+
     def test_weekly_reports_and_isolation(self):
         a=self.login('a@example.test');b=self.login('b@example.test')
         monthly={'month':'2026-10','sales':123456,'submitted':True}
@@ -135,7 +151,7 @@ class PublicSetupTests(unittest.TestCase):
                 c=http.client.HTTPConnection(urlparse(base).netloc)
                 c.request('POST','/api/setup',json.dumps(data),{'Content-Type':'application/json','Host':'school.example.test'})
                 r=c.getresponse();status=r.status;r.read();c.close();return status
-            data={'name':'講師','email':'teacher@example.test','password':'test-password-123'}
+            data={'name':'講師','email':'teacher@example.test','password':'123456'}
             self.assertEqual(send(data),403)
             self.assertEqual(send({**data,'setup_key':'wrong'}),403)
             self.assertEqual(send({**data,'setup_key':key}),200)
