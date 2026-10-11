@@ -128,6 +128,61 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/reports',auth=a)[1][0]['sales'],123456)
         self.assertEqual(self.request('/api/weekly')[0],401)
 
+    def test_ten_failures_lock_and_manual_unlock(self):
+        original=self.login('a@example.test');other=self.login('b@example.test')
+        wrong={'email':'a@example.test','password':'Wrong-password-123'}
+        for _ in range(9): self.assertEqual(self.request('/api/login',wrong)[0],401)
+        self.login('a@example.test')  # A success resets the consecutive counter.
+        for _ in range(9): self.assertEqual(self.request('/api/login',wrong)[0],401)
+        self.assertEqual(self.request('/api/login',wrong)[0],423)
+        self.assertEqual(self.request('/api/me',auth=original)[0],401)
+        self.assertEqual(self.request('/api/login',{'email':'a@example.test','password':'Test-password-123'})[0],423)
+        with sqlite3.connect(self.private/'students.sqlite3') as db:
+            db.execute('UPDATE login_attempts SET started=0')
+        self.assertEqual(self.request('/api/login',wrong)[0],423)
+        self.assertEqual(self.request('/api/student/unlock',{'id':2},other)[0],403)
+        self.assertEqual(self.request('/api/student/unlock',{'id':2},self.teacher,csrf=False)[0],403)
+        self.assertEqual(self.request('/api/student/unlock',{'id':2},self.teacher)[0],200)
+        self.login('a@example.test')
+        self.assertEqual(self.request('/api/me',auth=original)[0],401)
+
+    def reset_token(self):
+        import re
+        files=sorted((self.private/'mail-preview').glob('reset-*.json'),key=lambda p:p.stat().st_mtime_ns)
+        preview=json.loads(files[-1].read_text())
+        self.assertEqual(preview['to'],'a@example.test')
+        return re.search(r'#reset=([a-f0-9]{64})',preview['message']).group(1)
+
+    def test_email_password_reset(self):
+        original=self.login('a@example.test')
+        known=self.request('/api/password/forgot',{'email':'a@example.test'})
+        unknown=self.request('/api/password/forgot',{'email':'missing@example.test'})
+        self.assertEqual(known[:2],unknown[:2])
+        token=self.reset_token()
+        with sqlite3.connect(self.private/'students.sqlite3') as db:
+            stored=db.execute('SELECT token FROM password_resets WHERE user_id=2').fetchone()[0]
+            self.assertEqual(stored,hashlib.sha256(token.encode()).hexdigest())
+        self.assertEqual(self.request('/api/password/reset',{'token':token,'password':'12345678'})[0],400)
+        self.assertEqual(self.request('/api/password/reset',{'token':token,'password':'Reset-password-123'})[0],200)
+        self.assertEqual(self.request('/api/me',auth=original)[0],401)
+        self.login('a@example.test','Reset-password-123')
+        self.assertEqual(self.request('/api/password/reset',{'token':token,'password':'Another-password-123'})[0],400)
+        self.request('/api/password/forgot',{'email':'a@example.test'})
+        expired=self.reset_token()
+        with sqlite3.connect(self.private/'students.sqlite3') as db: db.execute('UPDATE password_resets SET expires=0')
+        self.assertEqual(self.request('/api/password/reset',{'token':expired,'password':'Another-password-123'})[0],400)
+
+    def test_reset_keeps_lock_and_throttles_email(self):
+        with sqlite3.connect(self.private/'students.sqlite3') as db: db.execute('UPDATE users SET locked=1,failed_attempts=10 WHERE id=2')
+        for _ in range(4): self.assertEqual(self.request('/api/password/forgot',{'email':'a@example.test'})[0],200)
+        self.assertEqual(len(list((self.private/'mail-preview').glob('reset-*.json'))),3)
+        token=self.reset_token()
+        result=self.request('/api/password/reset',{'token':token,'password':'Reset-password-123'})
+        self.assertEqual(result[0],200);self.assertTrue(result[1]['locked'])
+        self.assertEqual(self.request('/api/login',{'email':'a@example.test','password':'Reset-password-123'})[0],423)
+        self.request('/api/student/unlock',{'id':2},self.teacher)
+        self.login('a@example.test','Reset-password-123')
+
     def test_comment_notifications(self):
         a=self.login('a@example.test')
         feedback={'student_id':2,'month':'2026-10','status':'順調','comment':'メールに含めない相談内容'}

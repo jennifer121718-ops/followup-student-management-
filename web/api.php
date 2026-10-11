@@ -15,8 +15,8 @@ function run(PDO $db, string $sql, array $args = []): PDOStatement {
     $stmt = $db->prepare($sql); $stmt->execute($args); return $stmt;
 }
 function userView(array $row): array {
-    $result = array_intersect_key($row, array_flip(['id','email','role','name','prefecture','cohort','start_date','active']));
-    $result['id'] = (int)$result['id']; $result['active'] = (int)$result['active']; return $result;
+    $result = array_intersect_key($row, array_flip(['id','email','role','name','prefecture','cohort','start_date','active','locked']));
+    $result['id'] = (int)$result['id']; $result['active'] = (int)$result['active']; $result['locked'] = (int)$result['locked']; return $result;
 }
 function passwordValue(mixed $password): string {
     if (!is_string($password) || preg_match_all('/./us', $password) < 8 || strlen($password) > 256 || !preg_match('/[A-Z]/', $password) || !preg_match('/[a-z]/', $password) || !preg_match('/[0-9]/', $password)) throw new InvalidArgumentException();
@@ -67,28 +67,29 @@ function sendNotification(PDO $db, array $settings, string $private, int $id): a
     if ($event['state']==='sent') return ['id'=>$id,'state'=>'sent'];
     $claimed=run($db,"UPDATE notifications SET state='sending',attempted_at=?,attempts=attempts+1,recipient=? WHERE id=? AND (state IN ('pending','failed') OR (state='sending' AND attempted_at<?))",[time(),$recipient,$id,time()-300])->rowCount();
     if (!$claimed) return ['id'=>$id,'state'=>'sending'];
-    $success=false;
-    try {
-        $from=$settings['notification_from'];
-        if (!filter_var($from,FILTER_VALIDATE_EMAIL) || !filter_var($recipient,FILTER_VALIDATE_EMAIL) || !str_starts_with($settings['app_url'],'https://')) throw new RuntimeException('mail settings');
-        if ($settings['notification_transport']==='file' && PHP_SAPI==='cli-server') {
-            if (getenv('FOLLOWUP_MAIL_TEST_FAIL')==='1' || is_file($private.'/simulate-mail-failure')) throw new RuntimeException('simulated failure');
-            $dir=$private.'/mail-preview';
-            if (!is_dir($dir) && !mkdir($dir,0700)) throw new RuntimeException('preview directory');
-            $file=$dir.'/'.$id.'.json';
-            $success=file_put_contents($file,json_encode(['from'=>$from,'to'=>$recipient,'subject'=>$event['subject'],'message'=>$event['message']],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),LOCK_EX)!==false;
-            if ($success) chmod($file,0600);
-        } elseif ($settings['notification_transport']==='mail') {
-            $subject='=?UTF-8?B?'.base64_encode($event['subject']).'?=';
-            $headers="From: Followup <".$from.">\r\nReply-To: ".$from."\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64";
-            $success=@mail($recipient,$subject,chunk_split(base64_encode($event['message'])),$headers,'-f'.escapeshellarg($from));
-        }
-    } catch (Throwable $error) {
-        // Do not log addresses, credentials or message contents.
-        $success=false;
-    }
+    $success=deliverEmail($settings,$private,$recipient,$event['subject'],$event['message'],(string)$id);
     run($db,'UPDATE notifications SET state=?,sent_at=? WHERE id=?',[$success?'sent':'failed',$success?time():null,$id]);
     return ['id'=>$id,'state'=>$success?'sent':'failed','transport'=>$settings['notification_transport']];
+}
+
+function deliverEmail(array $settings, string $private, string $recipient, string $subject, string $message, string $reference): bool {
+    try {
+        $from=$settings['notification_from'];
+        if (!filter_var($from,FILTER_VALIDATE_EMAIL) || !filter_var($recipient,FILTER_VALIDATE_EMAIL) || !str_starts_with($settings['app_url'],'https://')) return false;
+        if ($settings['notification_transport']==='file' && PHP_SAPI==='cli-server') {
+            if (getenv('FOLLOWUP_MAIL_TEST_FAIL')==='1' || is_file($private.'/simulate-mail-failure')) return false;
+            $dir=$private.'/mail-preview';
+            if (!is_dir($dir) && !mkdir($dir,0700)) return false;
+            $file=$dir.'/'.$reference.'.json';
+            $ok=file_put_contents($file,json_encode(['from'=>$from,'to'=>$recipient,'subject'=>$subject,'message'=>$message],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),LOCK_EX)!==false;
+            if ($ok) chmod($file,0600);
+            return $ok;
+        }
+        if ($settings['notification_transport']!=='mail') return false;
+        $encoded='=?UTF-8?B?'.base64_encode($subject).'?=';
+        $headers="From: Followup <".$from.">\r\nReply-To: ".$from."\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64";
+        return @mail($recipient,$encoded,chunk_split(base64_encode($message)),$headers,'-f'.escapeshellarg($from));
+    } catch (Throwable $error) { return false; }
 }
 
 try {
@@ -106,8 +107,17 @@ try {
     CREATE TABLE IF NOT EXISTS reports(student_id INTEGER REFERENCES users(id),month TEXT NOT NULL,sales REAL DEFAULT 0,gross_profit REAL DEFAULT 0,net_profit REAL DEFAULT 0,units INTEGER DEFAULT 0,target REAL DEFAULT 0,next_target REAL DEFAULT 0,current_goal TEXT DEFAULT '',next_goal TEXT DEFAULT '',activities TEXT DEFAULT '',successes TEXT DEFAULT '',challenges TEXT DEFAULT '',next_actions TEXT DEFAULT '',consultation TEXT DEFAULT '',submitted INTEGER DEFAULT 0,submitted_at TEXT,comment TEXT DEFAULT '',status TEXT DEFAULT '要確認',PRIMARY KEY(student_id,month));
     CREATE TABLE IF NOT EXISTS weekly_reports(student_id INTEGER REFERENCES users(id),week_start TEXT NOT NULL,activities TEXT DEFAULT '',challenges TEXT DEFAULT '',next_actions TEXT DEFAULT '',condition TEXT DEFAULT '順調',submitted INTEGER DEFAULT 0,submitted_at TEXT,comment TEXT DEFAULT '',status TEXT DEFAULT '要確認',PRIMARY KEY(student_id,week_start));
     CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY,student_id INTEGER REFERENCES users(id),kind TEXT NOT NULL,period TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,message TEXT NOT NULL,transport TEXT NOT NULL,state TEXT NOT NULL,attempts INTEGER DEFAULT 0,created_at INTEGER NOT NULL,attempted_at INTEGER,sent_at INTEGER);
+    CREATE TABLE IF NOT EXISTS password_resets(token TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),expires INTEGER NOT NULL,used_at INTEGER);
+    CREATE TABLE IF NOT EXISTS reset_requests(bucket TEXT PRIMARY KEY,count INTEGER NOT NULL,started INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),csrf TEXT NOT NULL,expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS login_attempts(bucket TEXT PRIMARY KEY,count INTEGER NOT NULL,started INTEGER NOT NULL);");
+    $columns=array_column($db->query('PRAGMA table_info(users)')->fetchAll(),'name');
+    foreach (['locked','failed_attempts'] as $column) {
+        if (!in_array($column,$columns,true)) {
+            try { $db->exec('ALTER TABLE users ADD COLUMN '.$column.' INTEGER NOT NULL DEFAULT 0'); }
+            catch (PDOException $error) { if (!in_array($column,array_column($db->query('PRAGMA table_info(users)')->fetchAll(),'name'),true)) throw $error; }
+        }
+    }
     chmod($private . '/students.sqlite3', 0600);
     $local = PHP_SAPI === 'cli-server' && in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1','::1'], true) && in_array(parse_url('http://' . ($_SERVER['HTTP_HOST'] ?? ''), PHP_URL_HOST), ['localhost','127.0.0.1','::1'], true);
     $secure = !$local;
@@ -143,34 +153,82 @@ try {
         if (is_file($hashFile)) unlink($hashFile);
         reply(200, ['ok'=>true]);
     }
+    if ($method==='POST' && $route==='/api/password/forgot') {
+        $generic=['ok'=>true,'message'=>'アドレスが登録されている場合、再設定メールを送信します。届かない場合は迷惑メールフォルダを確認するか講師へご連絡ください。'];
+        $email=strtolower(trim(textValue($data,'email')));
+        if (!filter_var($email,FILTER_VALIDATE_EMAIL)) reply(200,$generic);
+        $now=time();$buckets=['email:'.hash('sha256',$email)=>3,'ip:'.hash('sha256',$_SERVER['REMOTE_ADDR']??'')=>10];
+        $db->exec('BEGIN IMMEDIATE');
+        run($db,'DELETE FROM reset_requests WHERE started<?',[$now-3600]);
+        foreach ($buckets as $bucket=>$limit) {
+            $count=run($db,'SELECT count FROM reset_requests WHERE bucket=?',[$bucket])->fetchColumn();
+            if ($count!==false && (int)$count >= $limit) { $db->exec('COMMIT');reply(200,$generic); }
+        }
+        foreach ($buckets as $bucket=>$limit) run($db,'INSERT INTO reset_requests(bucket,count,started) VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1',[$bucket,$now]);
+        $target=run($db,'SELECT id,email FROM users WHERE email=? AND active=1',[$email])->fetch();
+        $reset=null;
+        if ($target) {
+            $reset=bin2hex(random_bytes(32));
+            run($db,'DELETE FROM password_resets WHERE user_id=? OR expires<?',[$target['id'],$now]);
+            run($db,'INSERT INTO password_resets(token,user_id,expires) VALUES(?,?,?)',[hash('sha256',$reset),$target['id'],$now+3600]);
+        }
+        $db->exec('COMMIT');
+        if ($target && $reset) {
+            $link=$settings['app_url'].'#reset='.$reset;
+            $message="パスワード再設定の依頼を受け付けました。\n\n次のリンクから新しいパスワードを設定してください。リンクは1時間有効で、一度だけ使用できます。\n".$link."\n\n心当たりがなければ操作する必要はありません。\nアカウントがロックされている場合、パスワード変更後も講師によるロック解除が必要です。\n";
+            deliverEmail($settings,$private,$target['email'],'【Followup】パスワードの再設定',$message,'reset-'.bin2hex(random_bytes(8)));
+        }
+        reply(200,$generic);
+    }
+    if ($method==='POST' && $route==='/api/password/reset') {
+        $reset=$data['token']??'';
+        if (!is_string($reset) || !preg_match('/^[a-f0-9]{64}$/D',$reset)) reply(400,['error'=>'再設定リンクが無効です。新しく再設定メールを依頼してください']);
+        $password=passwordValue($data['password']??null);
+        $db->exec('BEGIN IMMEDIATE');
+        $target=run($db,'SELECT r.*,u.locked,u.email FROM password_resets r JOIN users u ON u.id=r.user_id WHERE r.token=? AND r.used_at IS NULL AND r.expires>? AND u.active=1',[hash('sha256',$reset),time()])->fetch();
+        if (!$target) { $db->exec('ROLLBACK');reply(400,['error'=>'再設定リンクが期限切れ、または使用済みです。新しく再設定メールを依頼してください']); }
+        run($db,'UPDATE users SET password=?,failed_attempts=CASE WHEN locked=0 THEN 0 ELSE failed_attempts END WHERE id=?',[password_hash($password,PASSWORD_DEFAULT),$target['user_id']]);
+        run($db,'UPDATE password_resets SET used_at=? WHERE user_id=?',[time(),$target['user_id']]);
+        run($db,'DELETE FROM sessions WHERE user_id=?',[$target['user_id']]);
+        if (!$target['locked']) run($db,'DELETE FROM login_attempts WHERE bucket=?',[hash('sha256',$target['email'])]);
+        $db->exec('COMMIT');reply(200,['ok'=>true,'locked'=>(bool)$target['locked']]);
+    }
     if ($method === 'POST' && $route === '/api/login') {
         $email = strtolower(trim(textValue($data,'email')));
-        $bucket = hash('sha256', $email);
-        $now = time();
-        $db->exec('BEGIN IMMEDIATE');
-        run($db,'DELETE FROM login_attempts WHERE started<?',[$now-900]);
-        $attempt = run($db,'SELECT count FROM login_attempts WHERE bucket=?',[$bucket])->fetchColumn();
-        if ($attempt !== false && (int)$attempt >= 20) { $db->exec('COMMIT'); reply(429,['error'=>'15分ほど待ってから再試行してください']); }
-        $user = run($db,'SELECT * FROM users WHERE email=? AND active=1',[$email])->fetch();
         $password = $data['password'] ?? null;
         if (!is_string($password) || strlen($password)>256) throw new InvalidArgumentException();
-        $digest = hash('sha256',$password);
-        if (!$user || !password_verify($digest,$user['password'])) {
+        $bucket = hash('sha256', $email);$now=time();
+        $db->exec('BEGIN IMMEDIATE');
+        $user=run($db,'SELECT * FROM users WHERE email=? AND active=1',[$email])->fetch();
+        if ($user && $user['locked']) { $db->exec('COMMIT');reply(423,['error'=>'アカウントがロックされています。講師に解除を依頼してください']); }
+        run($db,'DELETE FROM login_attempts WHERE started<?',[$now-900]);
+        $attempt=run($db,'SELECT count FROM login_attempts WHERE bucket=?',[$bucket])->fetchColumn();
+        if (!$user && $attempt!==false && (int)$attempt >= 10) { $db->exec('COMMIT');reply(429,['error'=>'しばらく待ってから再試行してください']); }
+        if (!$user || !password_verify(hash('sha256',$password),$user['password'])) {
             run($db,'INSERT INTO login_attempts(bucket,count,started) VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1',[$bucket,$now]);
-            $db->exec('COMMIT'); reply(401,['error'=>'メールアドレスまたはパスワードが違います']);
+            $locked=false;
+            if ($user) {
+                $failures=(int)$user['failed_attempts']+1;$locked=$failures>=10;
+                run($db,'UPDATE users SET failed_attempts=?,locked=? WHERE id=?',[$failures,(int)$locked,$user['id']]);
+                if ($locked) run($db,'DELETE FROM sessions WHERE user_id=?',[$user['id']]);
+            }
+            $db->exec('COMMIT');
+            if ($locked) reply(423,['error'=>'10回連続で間違えたためロックしました。講師に解除を依頼してください']);
+            reply(401,['error'=>'メールアドレスまたはパスワードが違います']);
         }
+        run($db,'UPDATE users SET failed_attempts=0 WHERE id=?',[$user['id']]);
         run($db,'DELETE FROM login_attempts WHERE bucket=?',[$bucket]);
         run($db,'DELETE FROM sessions WHERE expires<?',[$now]);
         $token=bin2hex(random_bytes(32));$csrf=bin2hex(random_bytes(32));
         run($db,'INSERT INTO sessions(token,user_id,csrf,expires) VALUES(?,?,?,?)',[hash('sha256',$token),$user['id'],$csrf,$now+28800]);
         $db->exec('COMMIT');
-        $cookiePath = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/') ?: '/';
+        $cookiePath=rtrim(dirname($_SERVER['SCRIPT_NAME']),'/')?:'/';
         setcookie('followup_session',$token,['expires'=>$now+28800,'path'=>$cookiePath,'secure'=>$secure,'httponly'=>true,'samesite'=>'Strict']);
         reply(200,['ok'=>true]);
     }
     $token = hash('sha256', $_COOKIE['followup_session'] ?? '');
     $session = run($db,'SELECT * FROM sessions WHERE token=? AND expires>?',[$token,time()])->fetch();
-    $user = $session ? run($db,'SELECT * FROM users WHERE id=? AND active=1',[$session['user_id']])->fetch() : false;
+    $user = $session ? run($db,'SELECT * FROM users WHERE id=? AND active=1 AND locked=0',[$session['user_id']])->fetch() : false;
     if (!$user) reply(401,['error'=>'ログインしてください']);
     if ($method === 'GET') {
         if ($route === '/api/me') reply(200,['user'=>userView($user),'csrf'=>$session['csrf']]);
@@ -203,6 +261,16 @@ try {
         reply(404,['error'=>'見つかりません']);
     }
     if (!hash_equals($session['csrf'], $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '')) reply(403,['error'=>'操作を再試行してください']);
+    if ($route==='/api/student/unlock') {
+        if ($user['role']!=='teacher') reply(403,['error'=>'アクセスできません']);
+        $id=idValue($data['id']??null);
+        $target=run($db,"SELECT email FROM users WHERE id=? AND role='student'",[$id])->fetch();
+        if (!$target) throw new InvalidArgumentException();
+        $db->exec('BEGIN IMMEDIATE');
+        run($db,'UPDATE users SET locked=0,failed_attempts=0 WHERE id=?',[$id]);
+        run($db,'DELETE FROM login_attempts WHERE bucket=?',[hash('sha256',$target['email'])]);
+        $db->exec('COMMIT');reply(200,['ok'=>true]);
+    }
     if ($route === '/api/notification/retry') {
         if ($user['role']!=='teacher') reply(403,['error'=>'アクセスできません']);
         $id=idValue($data['id']??null);
@@ -241,12 +309,14 @@ try {
         if ($route === '/api/student/profile') {
             $values=credentials($data);
             run($db,"UPDATE users SET email=?,name=?,prefecture=?,cohort=?,start_date=? WHERE id=?",[...$values,$id]);
+            run($db,'DELETE FROM password_resets WHERE user_id=?',[$id]);
         } else {
             $db->exec('BEGIN IMMEDIATE');
             if ($route === '/api/student/update') {
                 if (!is_bool($data['active']??null)) throw new InvalidArgumentException();
                 run($db,'UPDATE users SET active=? WHERE id=?',[(int)$data['active'],$id]);
             } else run($db,'UPDATE users SET password=? WHERE id=?',[password_hash(passwordValue($data['password']??null),PASSWORD_DEFAULT),$id]);
+            run($db,'DELETE FROM password_resets WHERE user_id=?',[$id]);
             // Reactivation never resurrects a previous login session.
             run($db,'DELETE FROM sessions WHERE user_id=?',[$id]); $db->exec('COMMIT');
         }
@@ -258,6 +328,7 @@ try {
         if (!is_string($current) || strlen($current)>256 || !password_verify(hash('sha256',$current),$user['password'])) throw new InvalidArgumentException();
         $db->exec('BEGIN IMMEDIATE');
         run($db,'UPDATE users SET password=? WHERE id=?',[password_hash($new,PASSWORD_DEFAULT),$user['id']]);
+        run($db,'DELETE FROM password_resets WHERE user_id=?',[$user['id']]);
         run($db,'DELETE FROM sessions WHERE user_id=? AND token<>?',[$user['id'],$token]);$db->exec('COMMIT');reply(200,['ok'=>true]);
     }
     if (in_array($route,['/api/weekly','/api/weekly-feedback'],true)) {

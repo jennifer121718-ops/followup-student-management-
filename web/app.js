@@ -133,7 +133,8 @@ async function load() {
 }
 function login() {
   account.innerHTML = "";
-  app.innerHTML = `<section class="login"><small>FOLLOWUP STUDENT MANAGEMENT</small><h1>おかえりなさい</h1><p>登録されたアカウントでログインしてください。</p><form id="login"><label>メールアドレス</label><input name="email" type="email" autocomplete="username" required><label>パスワード</label><input name="password" type="password" autocomplete="current-password" required><div class="actions"><button>ログイン</button></div></form></section>`;
+  app.innerHTML = `<section class="login"><small>FOLLOWUP STUDENT MANAGEMENT</small><h1>おかえりなさい</h1><p>登録されたアカウントでログインしてください。</p><form id="login"><label>メールアドレス</label><input name="email" type="email" autocomplete="username" required><label>パスワード</label><input name="password" type="password" autocomplete="current-password" required><div class="actions"><button>ログイン</button></div></form><div class="actions"><button class="secondary" type="button" id="forgot">パスワードを忘れた方</button></div></section>`;
+  document.querySelector("#forgot").onclick = forgotPassword;
   bind("#login", async (data) => {
     await api("/api/login", data);
     selected = null;
@@ -203,7 +204,7 @@ function dashboard() {
       ? list
           .map((s) => {
             const r = report(s.id);
-            return `<tr><td><button class="link" data-id="${s.id}">${esc(s.name)}</button><small>${esc(s.cohort || "参加期未登録")}</small></td><td>${badge(r?.submitted ? "提出済み" : "未提出")}</td><td>${r?.submitted ? money(r.sales) : "—"}</td><td>${r?.submitted ? money(r.net_profit) : "—"}</td><td>${growth(s.id)}</td><td>${r?.submitted ? ratio(r) : "—"}</td><td>${badge(r?.status || "要確認")}</td></tr>`;
+            return `<tr><td><button class="link" data-id="${s.id}">${esc(s.name)}</button><small>${esc(s.cohort || "参加期未登録")}</small>${s.locked ? badge("ログインロック中") : ""}</td><td>${badge(r?.submitted ? "提出済み" : "未提出")}</td><td>${r?.submitted ? money(r.sales) : "—"}</td><td>${r?.submitted ? money(r.net_profit) : "—"}</td><td>${growth(s.id)}</td><td>${r?.submitted ? ratio(r) : "—"}</td><td>${badge(r?.status || "要確認")}</td></tr>`;
           })
           .join("")
       : '<tr><td colspan="7">該当する生徒はいません。生徒を登録すると一覧に表示されます。</td></tr>';
@@ -239,7 +240,7 @@ function detail() {
     },
     history = reports.filter((r) => r.student_id === s.id && r.submitted),
     max = Math.max(1, ...history.map((r) => r.sales));
-  app.innerHTML = `${me.role === "teacher" ? '<button class="secondary" id="back">← 生徒一覧</button>' : ""}<h1>${esc(s.name)}${me.role === "teacher" ? " さんのカルテ" : " さんのマイページ"}</h1><p>${esc(s.prefecture || "都道府県未登録")} / ${esc(s.cohort || "参加期未登録")} / 開始日 ${esc(s.start_date || "未登録")} / ${s.active ? "在籍" : "卒業"}</p><div class="toolbar">${monthControl()}${badge(r.submitted ? "提出済み" : "未提出")}${badge(r.status || "要確認")}</div><section><h2>売上・利益の推移</h2>${history.length ? trend(history) : "<p>提出済みの月報があると推移が表示されます。</p>"}<div class="tablewrap"><table id="monthly-history"><thead><tr><th>月</th><th>売上</th><th>粗利益</th><th>純利益</th><th>目標達成率</th><th>前月比</th></tr></thead><tbody>${history.map((r) => `<tr><td><button class="link" data-month="${r.month}">${r.month}</button></td><td>${money(r.sales)}</td><td>${money(r.gross_profit)}</td><td>${money(r.net_profit)}</td><td>${ratio(r)}</td><td>${growth(s.id, r.month)}</td></tr>`).join("")}</tbody></table></div></section><section><h2>${month} の月報</h2><p>目標達成率 ${ratio(r)} ・ 売上前月比 ${growth(s.id)}<br>粗利益＝売上−仕入原価、純利益＝粗利益−経費。下書きは集計対象外です。提出後も修正・再提出できます。</p>${r.submitted_at ? `<p>最終提出：${new Date(r.submitted_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>` : ""}<form id="report"><div class="grid">${Object.entries(
+  app.innerHTML = `${me.role === "teacher" ? '<button class="secondary" id="back">← 生徒一覧</button>' : ""}<h1>${esc(s.name)}</h1><p>${esc(s.prefecture || "都道府県未登録")} / ${esc(s.cohort || "参加期未登録")} / 開始日 ${esc(s.start_date || "未登録")} / ${s.active ? "在籍" : "卒業"}</p><div class="toolbar">${monthControl()}${badge(r.submitted ? "提出済み" : "未提出")}${badge(r.status || "要確認")}</div><section><h2>売上・利益の推移</h2>${history.length ? trend(history) : "<p>提出済みの月報があると推移が表示されます。</p>"}<div class="tablewrap"><table id="monthly-history"><thead><tr><th>月</th><th>売上</th><th>粗利益</th><th>純利益</th><th>目標達成率</th><th>前月比</th></tr></thead><tbody>${history.map((r) => `<tr><td><button class="link" data-month="${r.month}">${r.month}</button></td><td>${money(r.sales)}</td><td>${money(r.gross_profit)}</td><td>${money(r.net_profit)}</td><td>${ratio(r)}</td><td>${growth(s.id, r.month)}</td></tr>`).join("")}</tbody></table></div></section><section><h2>${month} の月報</h2><p>目標達成率 ${ratio(r)} ・ 売上前月比 ${growth(s.id)}<br>粗利益＝売上−仕入原価、純利益＝粗利益−経費。下書きは集計対象外です。提出後も修正・再提出できます。</p>${r.submitted_at ? `<p>最終提出：${new Date(r.submitted_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}</p>` : ""}<form id="report"><div class="grid">${Object.entries(
     fields,
   )
     .map(
@@ -326,7 +327,7 @@ function trend(history) {
     )}</div><p class="muted">金額は提出済みの月報を表示。赤い棒は赤字を示します。各グラフの縮尺は独立しています。</p>`;
 }
 function profileEditor(s) {
-  return `<section><details><summary>生徒の基本情報を編集</summary><form id="profile"><div class="grid">${[
+  return `<section><h3>ログイン管理</h3><p>${s.locked ? "10回連続の入力間違いでロック中です。本人確認後に解除してください。" : "ログインのロックはありません。"}</p>${s.locked ? '<button type="button" class="secondary" id="unlock">ログインのロックを解除</button>' : ""}<details><summary>生徒の基本情報を編集</summary><form id="profile"><div class="grid">${[
     ["name", "生徒名", "text"],
     ["email", "メールアドレス", "email"],
     ["prefecture", "都道府県", "text"],
@@ -342,6 +343,25 @@ function profileEditor(s) {
     )}</div><div class="actions"><button>基本情報を保存</button></div></form></details><details class="reset"><summary>生徒のパスワードを再設定</summary><p>本人確認後に実行してください。既存のログインは失効します。新しいパスワードは本人だけに伝えてください。</p><form id="reset-password"><label>新しいパスワード（8文字以上・英大文字／英小文字／数字を含む）</label><input type="password" name="password" minlength="8" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}" maxlength="256" autocomplete="new-password" required><div class="actions"><button>再設定する</button></div></form></details></section>`;
 }
 function bindProfile(s) {
+  const unlock = document.querySelector("#unlock");
+  if (unlock)
+    unlock.onclick = async () => {
+      if (
+        !confirm(
+          `${s.name}さんの本人確認はできていますか？ ロックを解除します。`,
+        )
+      )
+        return;
+      unlock.disabled = true;
+      try {
+        await api("/api/student/unlock", { id: s.id });
+        notice("ロックを解除しました");
+        await load();
+      } catch (error) {
+        notice(error.message);
+        unlock.disabled = false;
+      }
+    };
   bind("#profile", async (d) => {
     await api("/api/student/profile", { ...d, id: s.id });
     notice("基本情報を更新しました");
@@ -354,7 +374,18 @@ function bindProfile(s) {
     await load();
   });
 }
+function openResetLink() {
+  const reset = new URLSearchParams(location.hash.slice(1)).get("reset");
+  if (reset) {
+    history.replaceState(null, "", location.pathname + location.search);
+    resetPasswordScreen(reset);
+    return true;
+  }
+  return false;
+}
+window.addEventListener("hashchange", openResetLink);
 async function start() {
+  if (openResetLink()) return;
   try {
     const setup = await api("/api/setup");
     if (setup.needs_setup) return setupScreen(setup.requires_key);
@@ -640,3 +671,60 @@ function notificationNote(form, id, kind, period) {
     target.append(button);
   }
 }
+
+function forgotPassword() {
+  account.innerHTML = "";
+  app.innerHTML = `<section class="login"><h1>パスワードを忘れた方</h1><p>登録しているメールアドレスを入力してください。再設定リンクをメールで案内します。</p><form id="forgot-form"><label for="forgot-email">メールアドレス</label><input id="forgot-email" name="email" type="email" autocomplete="username" required><div class="actions"><button>再設定メールを依頼</button><button class="secondary" type="button" id="back-login">ログインに戻る</button></div></form><p id="forgot-result" role="status"></p></section>`;
+  bind("#forgot-form", async (data) => {
+    const result = await api("/api/password/forgot", data);
+    document.querySelector("#forgot-result").textContent = result.message;
+  });
+  document.querySelector("#back-login").onclick = login;
+}
+function resetPasswordScreen(token) {
+  account.innerHTML = "";
+  app.innerHTML = `<section class="login"><h1>パスワード再設定</h1><p>8文字以上で、英大文字・英小文字・数字を含めてください。</p><form id="recover"><label>新しいパスワード</label><input name="password" type="password" minlength="8" maxlength="256" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).{8,}" autocomplete="new-password" required><label>確認のためもう一度入力</label><input name="confirmation" type="password" autocomplete="new-password" required><div class="actions"><button>新しいパスワードを設定</button></div></form><div class="actions"><button class="secondary" id="reset-back" type="button">ログインに戻る</button></div><p id="recover-result" role="status"></p></section>`;
+  bind("#recover", async (data) => {
+    if (data.password !== data.confirmation)
+      throw Error("パスワードが一致しません");
+    const result = await api("/api/password/reset", {
+      token,
+      password: data.password,
+    });
+    document.querySelector("#recover").remove();
+    document.querySelector("#recover-result").textContent = result.locked
+      ? "パスワードを変更しました。アカウントはロック中なので講師に解除を依頼してください。"
+      : "パスワードを変更しました。新しいパスワードでログインしてください。";
+  });
+  document.querySelector("#reset-back").onclick = login;
+}
+function enhancePasswords() {
+  app.querySelectorAll("input[type=password]").forEach((input) => {
+    if (input.dataset.visibilityControl) return;
+    input.dataset.visibilityControl = "ready";
+    input.spellcheck = false;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary password-toggle";
+    button.textContent = "表示";
+    button.setAttribute("aria-label", "パスワードを表示");
+    button.setAttribute("aria-pressed", "false");
+    button.onclick = () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      button.textContent = show ? "非表示" : "表示";
+      button.setAttribute(
+        "aria-label",
+        show ? "パスワードを非表示" : "パスワードを表示",
+      );
+      button.setAttribute("aria-pressed", String(show));
+      input.focus();
+    };
+    input.after(button);
+  });
+}
+new MutationObserver(enhancePasswords).observe(app, {
+  childList: true,
+  subtree: true,
+});
+enhancePasswords();

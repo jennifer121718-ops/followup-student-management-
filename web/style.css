@@ -301,3 +301,9 @@ header #account {
     height: 150px;
   }
 }
+.password-toggle {
+  font-size: 12px;
+  padding: 6px 12px;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}

@@ -15,5 +15,9 @@ $stmt=$db->prepare("SELECT id FROM users WHERE email=? AND role='teacher'");$stm
 if (!$id) exit("講師アカウントが見つかりません。\n");
 $db->beginTransaction();
 $stmt=$db->prepare('UPDATE users SET password=? WHERE id=?');$stmt->execute([password_hash(hash('sha256',$password),PASSWORD_DEFAULT),$id]);
+$columns=array_column($db->query('PRAGMA table_info(users)')->fetchAll(PDO::FETCH_ASSOC),'name');
+if(in_array('locked',$columns,true)){ $stmt=$db->prepare('UPDATE users SET locked=0,failed_attempts=0 WHERE id=?');$stmt->execute([$id]); }
+$stmt=$db->prepare('DELETE FROM login_attempts WHERE bucket=?');$stmt->execute([hash('sha256',$email)]);
+if($db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='password_resets'")->fetchColumn()){ $stmt=$db->prepare('DELETE FROM password_resets WHERE user_id=?');$stmt->execute([$id]); }
 $stmt=$db->prepare('DELETE FROM sessions WHERE user_id=?');$stmt->execute([$id]);$db->commit();
 fwrite(STDOUT,"パスワードを更新しました。既存のログインは無効になりました。\n");
