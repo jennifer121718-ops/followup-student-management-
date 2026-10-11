@@ -48,8 +48,51 @@ function textValue(array $data, string $name): string {
     return $value;
 }
 
+function queueNotification(PDO $db, array $settings, int $id, string $kind, string $period, string $old, string $comment): ?int {
+    if (trim($comment)==='' || trim($comment)===trim($old)) return null;
+    $student=run($db,"SELECT email FROM users WHERE id=? AND role='student' AND active=1",[$id])->fetch();
+    if (!$student) return null;
+    $label=$kind==='weekly'?'週報':'月報';
+    $message="講師から".$label."へのコメントが届きました。\n\n下記のページにログインして、講師コメントをご確認ください。\n".$settings['app_url']."\n\nこのメールにはコメント本文を記載していません。\n";
+    run($db,"INSERT INTO notifications(student_id,kind,period,recipient,subject,message,transport,state,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)",[$id,$kind,$period,$student['email'],'【Followup】講師からコメントが届きました',$message,$settings['notification_transport'],time()]);
+    return (int)$db->lastInsertId();
+}
+
+function sendNotification(PDO $db, array $settings, string $private, int $id): array {
+    $event=run($db,'SELECT n.*,u.active,u.email FROM notifications n JOIN users u ON u.id=n.student_id WHERE n.id=?',[$id])->fetch();
+    if (!$event) throw new InvalidArgumentException();
+    if (!$event['active']) return ['id'=>$id,'state'=>'inactive'];
+    // A changed address must receive the notification at its current binding.
+    $recipient=$event['email'];
+    if ($event['state']==='sent') return ['id'=>$id,'state'=>'sent'];
+    $claimed=run($db,"UPDATE notifications SET state='sending',attempted_at=?,attempts=attempts+1,recipient=? WHERE id=? AND (state IN ('pending','failed') OR (state='sending' AND attempted_at<?))",[time(),$recipient,$id,time()-300])->rowCount();
+    if (!$claimed) return ['id'=>$id,'state'=>'sending'];
+    $success=false;
+    try {
+        $from=$settings['notification_from'];
+        if (!filter_var($from,FILTER_VALIDATE_EMAIL) || !filter_var($recipient,FILTER_VALIDATE_EMAIL) || !str_starts_with($settings['app_url'],'https://')) throw new RuntimeException('mail settings');
+        if ($settings['notification_transport']==='file' && PHP_SAPI==='cli-server') {
+            if (getenv('FOLLOWUP_MAIL_TEST_FAIL')==='1' || is_file($private.'/simulate-mail-failure')) throw new RuntimeException('simulated failure');
+            $dir=$private.'/mail-preview';
+            if (!is_dir($dir) && !mkdir($dir,0700)) throw new RuntimeException('preview directory');
+            $file=$dir.'/'.$id.'.json';
+            $success=file_put_contents($file,json_encode(['from'=>$from,'to'=>$recipient,'subject'=>$event['subject'],'message'=>$event['message']],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),LOCK_EX)!==false;
+            if ($success) chmod($file,0600);
+        } elseif ($settings['notification_transport']==='mail') {
+            $subject='=?UTF-8?B?'.base64_encode($event['subject']).'?=';
+            $headers="From: Followup <".$from.">\r\nReply-To: ".$from."\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64";
+            $success=@mail($recipient,$subject,chunk_split(base64_encode($event['message'])),$headers,'-f'.escapeshellarg($from));
+        }
+    } catch (Throwable $error) {
+        // Do not log addresses, credentials or message contents.
+        $success=false;
+    }
+    run($db,'UPDATE notifications SET state=?,sent_at=? WHERE id=?',[$success?'sent':'failed',$success?time():null,$id]);
+    return ['id'=>$id,'state'=>$success?'sent':'failed','transport'=>$settings['notification_transport']];
+}
+
 try {
-    $settings = require __DIR__ . '/settings.php';
+    $settings = array_replace(['notification_from'=>'info@hmr-and-co.com','app_url'=>'https://hmr-and-co.com/followup/','notification_transport'=>PHP_SAPI==='cli-server'?'file':'mail'],require __DIR__ . '/settings.php');
     $private = $settings['private_dir'];
     if (!is_dir($private) && !mkdir($private, 0700, true) && !is_dir($private)) throw new RuntimeException('storage');
     $private = realpath($private);
@@ -62,6 +105,7 @@ try {
     $db->exec("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, password TEXT NOT NULL,role TEXT NOT NULL,name TEXT NOT NULL,prefecture TEXT DEFAULT '',cohort TEXT DEFAULT '',start_date TEXT DEFAULT '',active INTEGER DEFAULT 1);
     CREATE TABLE IF NOT EXISTS reports(student_id INTEGER REFERENCES users(id),month TEXT NOT NULL,sales REAL DEFAULT 0,gross_profit REAL DEFAULT 0,net_profit REAL DEFAULT 0,units INTEGER DEFAULT 0,target REAL DEFAULT 0,next_target REAL DEFAULT 0,current_goal TEXT DEFAULT '',next_goal TEXT DEFAULT '',activities TEXT DEFAULT '',successes TEXT DEFAULT '',challenges TEXT DEFAULT '',next_actions TEXT DEFAULT '',consultation TEXT DEFAULT '',submitted INTEGER DEFAULT 0,submitted_at TEXT,comment TEXT DEFAULT '',status TEXT DEFAULT '要確認',PRIMARY KEY(student_id,month));
     CREATE TABLE IF NOT EXISTS weekly_reports(student_id INTEGER REFERENCES users(id),week_start TEXT NOT NULL,activities TEXT DEFAULT '',challenges TEXT DEFAULT '',next_actions TEXT DEFAULT '',condition TEXT DEFAULT '順調',submitted INTEGER DEFAULT 0,submitted_at TEXT,comment TEXT DEFAULT '',status TEXT DEFAULT '要確認',PRIMARY KEY(student_id,week_start));
+    CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY,student_id INTEGER REFERENCES users(id),kind TEXT NOT NULL,period TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,message TEXT NOT NULL,transport TEXT NOT NULL,state TEXT NOT NULL,attempts INTEGER DEFAULT 0,created_at INTEGER NOT NULL,attempted_at INTEGER,sent_at INTEGER);
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),csrf TEXT NOT NULL,expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS login_attempts(bucket TEXT PRIMARY KEY,count INTEGER NOT NULL,started INTEGER NOT NULL);");
     chmod($private . '/students.sqlite3', 0600);
@@ -130,6 +174,12 @@ try {
     if (!$user) reply(401,['error'=>'ログインしてください']);
     if ($method === 'GET') {
         if ($route === '/api/me') reply(200,['user'=>userView($user),'csrf'=>$session['csrf']]);
+        if ($route === '/api/notifications') {
+            if ($user['role']!=='teacher') reply(403,['error'=>'アクセスできません']);
+            $rows=$db->query('SELECT id,student_id,kind,period,state,transport,created_at,attempted_at,sent_at FROM notifications ORDER BY id DESC')->fetchAll();
+            foreach ($rows as &$row) { $row['id']=(int)$row['id'];$row['student_id']=(int)$row['student_id']; } unset($row);
+            reply(200,$rows);
+        }
         if ($route === '/api/weekly') {
             if ($user['role'] === 'student') {
                 if (isset($_GET['student_id']) && (string)$_GET['student_id'] !== (string)$user['id']) reply(403,['error'=>'アクセスできません']);
@@ -153,6 +203,11 @@ try {
         reply(404,['error'=>'見つかりません']);
     }
     if (!hash_equals($session['csrf'], $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '')) reply(403,['error'=>'操作を再試行してください']);
+    if ($route === '/api/notification/retry') {
+        if ($user['role']!=='teacher') reply(403,['error'=>'アクセスできません']);
+        $id=idValue($data['id']??null);
+        reply(200,['ok'=>true,'notification'=>sendNotification($db,$settings,$private,$id)]);
+    }
     if ($route === '/api/backup') {
         if ($user['role'] !== 'teacher') reply(403,['error'=>'アクセスできません']);
         $backup = tempnam($private, 'backup-');
@@ -217,8 +272,12 @@ try {
             $status=$data['status']??'';$comment=textValue($data,'comment');
             if (!in_array($status,['順調','要確認','フォロー必要'],true)) throw new InvalidArgumentException();
             $db->exec('BEGIN IMMEDIATE');
+            $old=run($db,'SELECT comment FROM weekly_reports WHERE student_id=? AND week_start=?',[$id,$week])->fetchColumn();
             run($db,'INSERT OR IGNORE INTO weekly_reports(student_id,week_start) VALUES(?,?)',[$id,$week]);
             run($db,'UPDATE weekly_reports SET comment=?,status=? WHERE student_id=? AND week_start=?',[$comment,$status,$id,$week]);
+            $notification=queueNotification($db,$settings,$id,'weekly',$week,$old===false?'':$old,$comment);
+            $db->exec('COMMIT');
+            reply(200,['ok'=>true,'notification'=>$notification?sendNotification($db,$settings,$private,$notification):null]);
         } else {
             $activities=textValue($data,'activities');$challenges=textValue($data,'challenges');$actions=textValue($data,'next_actions');
             $condition=$data['condition']??'順調';$submitted=$data['submitted']??false;
@@ -238,8 +297,13 @@ try {
     if ($route === '/api/feedback') {
         $status=$data['status']??'';$comment=textValue($data,'comment');
         if (!in_array($status,['順調','要確認','フォロー必要'],true)) throw new InvalidArgumentException();
-        $db->exec('BEGIN IMMEDIATE');run($db,'INSERT OR IGNORE INTO reports(student_id,month) VALUES(?,?)',[$id,$month]);
-        run($db,'UPDATE reports SET comment=?,status=? WHERE student_id=? AND month=?',[$comment,$status,$id,$month]);$db->exec('COMMIT');reply(200,['ok'=>true]);
+        $db->exec('BEGIN IMMEDIATE');
+        $old=run($db,'SELECT comment FROM reports WHERE student_id=? AND month=?',[$id,$month])->fetchColumn();
+        run($db,'INSERT OR IGNORE INTO reports(student_id,month) VALUES(?,?)',[$id,$month]);
+        run($db,'UPDATE reports SET comment=?,status=? WHERE student_id=? AND month=?',[$comment,$status,$id,$month]);
+        $notification=queueNotification($db,$settings,$id,'monthly',$month,$old===false?'':$old,$comment);
+        $db->exec('COMMIT');
+        reply(200,['ok'=>true,'notification'=>$notification?sendNotification($db,$settings,$private,$notification):null]);
     }
     $numeric=['sales','gross_profit','net_profit','units','target','next_target'];
     $text=['current_goal','next_goal','activities','successes','challenges','next_actions','consultation'];$values=[];

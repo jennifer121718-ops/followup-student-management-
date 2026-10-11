@@ -5,6 +5,7 @@ let me,
   students = [],
   reports = [],
   weeklyReports = [],
+  notifications = [],
   selected = null,
   month = new Date()
     .toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" })
@@ -115,6 +116,7 @@ async function load() {
   reports = await api("/api/reports");
   weeklyReports = await api("/api/weekly");
   students = me.role === "teacher" ? await api("/api/students") : [me];
+  notifications = me.role === "teacher" ? await api("/api/notifications") : [];
   account.innerHTML = `${esc(me.name)}　<button class="secondary" id="password">パスワード変更</button> <button class="secondary" id="logout">ログアウト</button>`;
   document.querySelector("#logout").onclick = async () => {
     await api("/api/logout", {});
@@ -164,7 +166,11 @@ function dashboard() {
     ["prefecture", "都道府県", "text"],
     ["cohort", "参加期", "text"],
     ["start_date", "フォローアップ開始日", "date"],
-    ["password", "初期パスワード（8文字以上・英大文字／英小文字／数字を含む）", "password"],
+    [
+      "password",
+      "初期パスワード（8文字以上・英大文字／英小文字／数字を含む）",
+      "password",
+    ],
   ]
     .map(
       ([k, l, t]) =>
@@ -252,10 +258,15 @@ function detail() {
       dashboard();
     };
     bind("#feedback", async (d) => {
-      await api("/api/feedback", { ...d, student_id: s.id, month });
-      notice("コメントを保存しました");
+      const result = await api("/api/feedback", {
+        ...d,
+        student_id: s.id,
+        month,
+      });
+      feedbackNotice(result);
       await load();
     });
+    notificationNote("#feedback", s.id, "monthly", month);
     document.querySelector("#active").onclick = async () => {
       if (
         confirm(`${s.name}さんを${s.active ? "卒業" : "在籍"}扱いにしますか？`)
@@ -566,12 +577,66 @@ function weeklyDetail(student) {
   });
   if (me.role === "teacher")
     bind("#weekly-feedback", async (d) => {
-      await api("/api/weekly-feedback", {
+      const result = await api("/api/weekly-feedback", {
         ...d,
         student_id: student.id,
         week_start: week,
       });
-      notice("週報コメントを保存しました");
+      feedbackNotice(result);
       await load();
     });
+  if (me.role === "teacher")
+    notificationNote("#weekly-feedback", student.id, "weekly", week);
+}
+
+function feedbackNotice(result) {
+  const n = result.notification;
+  if (n?.state === "failed")
+    notice(
+      "コメントは保存済みですが、通知メールの送信に失敗しました。「通知を再送」で再試行できます。",
+    );
+  else if (n?.state === "sent")
+    notice(
+      n.transport === "file"
+        ? "コメントを保存し、ローカル確認用の通知を記録しました。"
+        : "コメントを保存し、通知メールを送信処理に渡しました。",
+    );
+  else notice("コメントを保存しました。");
+}
+function notificationNote(form, id, kind, period) {
+  const target = document.querySelector(form);
+  if (!target) return;
+  const event = notifications.find(
+    (n) => n.student_id === id && n.kind === kind && n.period === period,
+  );
+  const note = document.createElement("p");
+  note.className = "notification-state";
+  note.textContent = event
+    ? event.state === "sent"
+      ? event.transport === "file"
+        ? "通知：ローカル確認用に記録済み"
+        : "通知：メールサーバーへ送信済み（到着は受信側で確認してください）"
+      : event.state === "failed"
+        ? "通知：送信失敗。コメントは保存されています。"
+        : "通知：送信待ち／処理中。"
+    : "新しいコメントを保存すると、登録メールアドレスへ通知します。同じ内容の再保存やステータスだけの変更では通知しません。";
+  target.append(note);
+  if (event && ["failed", "pending", "sending"].includes(event.state)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    button.textContent = "通知を再送";
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const result = await api("/api/notification/retry", { id: event.id });
+        feedbackNotice(result);
+        await load();
+      } catch (error) {
+        notice(error.message);
+        button.disabled = false;
+      }
+    };
+    target.append(button);
+  }
 }

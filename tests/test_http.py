@@ -128,6 +128,43 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/reports',auth=a)[1][0]['sales'],123456)
         self.assertEqual(self.request('/api/weekly')[0],401)
 
+    def test_comment_notifications(self):
+        a=self.login('a@example.test')
+        feedback={'student_id':2,'month':'2026-10','status':'順調','comment':'メールに含めない相談内容'}
+        self.assertEqual(self.request('/api/feedback',feedback,a)[0],403)
+        self.assertEqual(self.request('/api/notifications',auth=self.teacher)[1],[])
+        code,result,_=self.request('/api/feedback',feedback,self.teacher)
+        self.assertEqual(code,200);self.assertEqual(result['notification']['state'],'sent')
+        event_id=result['notification']['id']
+        preview=json.loads((self.private/'mail-preview'/f'{event_id}.json').read_text())
+        self.assertEqual(preview['to'],'a@example.test');self.assertEqual(preview['from'],'info@hmr-and-co.com')
+        self.assertIn('https://hmr-and-co.com/followup/',preview['message'])
+        self.assertNotIn(feedback['comment'],preview['message']);self.assertNotIn('b@example.test',preview['message'])
+        self.assertIsNone(self.request('/api/feedback',{**feedback,'status':'要確認'},self.teacher)[1]['notification'])
+        self.assertIsNone(self.request('/api/feedback',{**feedback,'comment':''},self.teacher)[1]['notification'])
+        self.assertEqual(len(self.request('/api/notifications',auth=self.teacher)[1]),1)
+        weekly={'student_id':2,'week_start':'2026-10-05','status':'順調','comment':'週報の秘密の相談'}
+        self.assertEqual(self.request('/api/weekly-feedback',weekly,self.teacher)[1]['notification']['state'],'sent')
+        self.assertEqual(len(list((self.private/'mail-preview').glob('*.json'))),2)
+        self.assertEqual(self.request('/api/notifications',auth=a)[0],403)
+        self.assertEqual(self.request('/api/notification/retry',{'id':event_id},a)[0],403)
+        self.assertEqual(self.request('/api/notification/retry',{'id':event_id},self.teacher,csrf=False)[0],403)
+        self.assertEqual(self.request('/api/notification/retry',{'id':event_id},self.teacher)[1]['notification']['state'],'sent')
+        with sqlite3.connect(self.private/'students.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT attempts FROM notifications WHERE id=?',(event_id,)).fetchone()[0],1)
+
+    def test_notification_failure_and_retry(self):
+        marker=self.private/'simulate-mail-failure';marker.touch()
+        feedback={'student_id':2,'month':'2026-10','status':'順調','comment':'保存するコメント'}
+        code,result,_=self.request('/api/feedback',feedback,self.teacher)
+        self.assertEqual(code,200);self.assertEqual(result['notification']['state'],'failed')
+        self.assertEqual(self.request('/api/reports',auth=self.teacher)[1][0]['comment'],feedback['comment'])
+        event_id=result['notification']['id'];marker.unlink()
+        self.assertEqual(self.request('/api/notification/retry',{'id':event_id},self.teacher)[1]['notification']['state'],'sent')
+        with sqlite3.connect(self.private/'students.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT attempts FROM notifications WHERE id=?',(event_id,)).fetchone()[0],2)
+        self.assertEqual(len(list((self.private/'mail-preview').glob('*.json'))),1)
+
     def test_backup_and_persistence(self):
         a=self.login('a@example.test')
         self.assertEqual(self.request('/api/report',{'month':'2026-10','sales':120000,'submitted':True},a)[0],200)
