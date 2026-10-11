@@ -267,7 +267,9 @@ try {
         $target=run($db,"SELECT email FROM users WHERE id=? AND role='student'",[$id])->fetch();
         if (!$target) throw new InvalidArgumentException();
         $db->exec('BEGIN IMMEDIATE');
-        run($db,'UPDATE users SET locked=0,failed_attempts=0 WHERE id=?',[$id]);
+        run($db,'UPDATE users SET locked=0,failed_attempts=0,password=? WHERE id=?',[password_hash(passwordValue('Campus13'),PASSWORD_DEFAULT),$id]);
+        run($db,'DELETE FROM sessions WHERE user_id=?',[$id]);
+        run($db,'DELETE FROM password_resets WHERE user_id=?',[$id]);
         run($db,'DELETE FROM login_attempts WHERE bucket=?',[hash('sha256',$target['email'])]);
         $db->exec('COMMIT');reply(200,['ok'=>true]);
     }

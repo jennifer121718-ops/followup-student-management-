@@ -327,7 +327,7 @@ function trend(history) {
     )}</div><p class="muted">金額は提出済みの月報を表示。赤い棒は赤字を示します。各グラフの縮尺は独立しています。</p>`;
 }
 function profileEditor(s) {
-  return `<section><h3>ログイン管理</h3><p>${s.locked ? "10回連続の入力間違いでロック中です。本人確認後に解除してください。" : "ログインのロックはありません。"}</p>${s.locked ? '<button type="button" class="secondary" id="unlock">ログインのロックを解除</button>' : ""}<details><summary>生徒の基本情報を編集</summary><form id="profile"><div class="grid">${[
+  return `<section><h3>ログイン管理</h3><p>${s.locked ? "10回連続の入力間違いでロック中です。本人確認後に解除してください。解除時は初期パスワード Campus13 に戻ります。" : "ログインのロックはありません。"}</p>${s.locked ? '<button type="button" class="secondary" id="unlock">ログインのロックを解除</button>' : ""}<details><summary>生徒の基本情報を編集</summary><form id="profile"><div class="grid">${[
     ["name", "生徒名", "text"],
     ["email", "メールアドレス", "email"],
     ["prefecture", "都道府県", "text"],
@@ -348,14 +348,14 @@ function bindProfile(s) {
     unlock.onclick = async () => {
       if (
         !confirm(
-          `${s.name}さんの本人確認はできていますか？ ロックを解除します。`,
+          `${s.name}さんの本人確認はできていますか？ ロックを解除し、パスワードを Campus13 に戻します。`,
         )
       )
         return;
       unlock.disabled = true;
       try {
         await api("/api/student/unlock", { id: s.id });
-        notice("ロックを解除しました");
+        notice("ロックを解除しました。初期パスワードは Campus13 です。");
         await load();
       } catch (error) {
         notice(error.message);

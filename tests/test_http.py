@@ -142,8 +142,12 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/login',wrong)[0],423)
         self.assertEqual(self.request('/api/student/unlock',{'id':2},other)[0],403)
         self.assertEqual(self.request('/api/student/unlock',{'id':2},self.teacher,csrf=False)[0],403)
+        self.request('/api/password/forgot',{'email':'a@example.test'})
+        pending_token=self.reset_token()
         self.assertEqual(self.request('/api/student/unlock',{'id':2},self.teacher)[0],200)
-        self.login('a@example.test')
+        self.assertEqual(self.request('/api/login',{'email':'a@example.test','password':'Test-password-123'})[0],401)
+        self.assertEqual(self.request('/api/password/reset',{'token':pending_token,'password':'Other-pass1'})[0],400)
+        self.login('a@example.test','Campus13')
         self.assertEqual(self.request('/api/me',auth=original)[0],401)
 
     def reset_token(self):
@@ -181,7 +185,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(result[0],200);self.assertTrue(result[1]['locked'])
         self.assertEqual(self.request('/api/login',{'email':'a@example.test','password':'Reset-password-123'})[0],423)
         self.request('/api/student/unlock',{'id':2},self.teacher)
-        self.login('a@example.test','Reset-password-123')
+        self.login('a@example.test','Campus13')
 
     def test_comment_notifications(self):
         a=self.login('a@example.test')

@@ -25,7 +25,7 @@ with php_server() as (base,private), sync_playwright() as p:
     assert statuses==[401]*9+[423]
     teacher.reload();expect(teacher.locator('#rows')).to_contain_text('ログインロック中');teacher.locator('#rows').get_by_role('button',name='生徒A',exact=True).click();expect(teacher.locator('h1')).to_have_text('生徒A')
     teacher.on('dialog',lambda dialog:dialog.accept());teacher.get_by_role('button',name='ログインのロックを解除').click();expect(teacher.locator('#unlock')).to_have_count(0)
-    student.locator('#login [name=email]').fill('a@example.test');student.locator('#login [name=password]').fill('Reset-pass1');student.get_by_role('button',name='ログイン',exact=True).click();expect(student.locator('h1')).to_have_text('生徒A')
+    student.locator('#login [name=email]').fill('a@example.test');student.locator('#login [name=password]').fill('Campus13');student.get_by_role('button',name='ログイン',exact=True).click();expect(student.locator('h1')).to_have_text('生徒A')
     assert not errors,errors
     browser.close()
 print('PASS: password visibility, forgot-password email flow, one-use reset screen, name-only titles, lock at 10 and teacher unlock')
